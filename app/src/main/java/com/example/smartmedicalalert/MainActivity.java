@@ -84,6 +84,9 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     private TextView esp32Info;
     private TextView deviceName;
 
+    private Button stopBackgroundScanBtn;
+    private Intent startBackgroundScan = null;
+
     private Handler handler = new Handler();
 
     private boolean isDeviceConnected = false;
@@ -327,7 +330,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                     ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT},
                             PERMISSIONS_REQUEST_CODE);
                 } else {
-                    beginScan();
+                    launchBackgroundScan();
                 }
             }
         });
@@ -411,6 +414,28 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 return false;
             }
         });
+
+        // Button to stop the background service scan
+        stopBackgroundScanBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // Foreground service was never started to begin with
+                if (startBackgroundScan == null) {
+                    return;
+                }
+                Toast.makeText(MainActivity.this, "Stopping continuous scan", Toast.LENGTH_LONG).show();
+                MainActivity.this.stopService(new Intent(MainActivity.this, BackgroundScan.class));
+                startBackgroundScan = null;
+            }
+        });
+
+    }
+
+    private void launchBackgroundScan() {
+        startBackgroundScan = new Intent(this, BackgroundScan.class);
+        startBackgroundScan.putExtra("service_uuid", SERVICE_UUID);
+        startBackgroundScan.putExtra("characteristic_uuid", CHARACTERISTIC_UUID);
+        startService(startBackgroundScan);
     }
 
     private void beginScan() {
@@ -571,6 +596,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         disconnectBtn = findViewById(R.id.disconnectBtn);
         esp32Info = findViewById(R.id.esp32_info);
         deviceName = findViewById(R.id.connectedDeviceName);
+        stopBackgroundScanBtn = findViewById(R.id.stopBackgroundScan);
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         editor = sharedPreferences.edit();
 

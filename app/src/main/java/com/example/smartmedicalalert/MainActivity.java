@@ -7,6 +7,8 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -25,13 +27,16 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.ParcelUuid;
 import android.preference.PreferenceManager;
@@ -47,8 +52,10 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.smartmedicalalert.helpers.NotificationHelper;
 import com.example.smartmedicalalert.recycleradapter.RecyclerAdapter;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -65,18 +72,15 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressLint("MissingPermission")
-public class MainActivity extends AppCompatActivity implements ActivityCompat.OnRequestPermissionsResultCallback, IDeviceConnect {
+public class MainActivity extends AppCompatActivity implements ActivityCompat.OnRequestPermissionsResultCallback, IDeviceConnect, IBackgroundScan {
     public static final int PERMISSIONS_REQUEST_CODE = 2;
-    private static final long SCAN_PERIOD = 10000;
 
     private static final String CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-    private static final String SUBSYSTEM_CHARACTERISTIC = "cba1d466-344c-4be3-ab3f-189f80dd7518";
     private static final String SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 
-    private SharedPreferences sharedPreferences;
-    private SharedPreferences.Editor editor;
+    public static String ALERT_NOTIFICATION_ID = "ALERT_NOTIFICATION";
+    public static String ALERT_NOTIFICATION_NAME = "Emergency Alert";
 
-    private boolean scanning;
     private boolean isGattConnected = false;
     private Button scanBtn;
     private Button disconnectBtn;
@@ -91,16 +95,16 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
 
     private boolean isDeviceConnected = false;
     private BluetoothAdapter bluetoothAdapter;
-    private BluetoothLeScanner scanner;
     private BluetoothGatt gatt = null;
     private BluetoothGattCharacteristic mCharacteristic;
-    private BluetoothGattCharacteristic subsystemCharacteristic;
     private List<MyBluetoothDevice> scannedDevices = new ArrayList<MyBluetoothDevice>();
     private Map<String, List<MyBluetoothDevice>> deviceNameMapping = new HashMap<String, List<MyBluetoothDevice>>();
 
     private ProgressBar progressBar;
     private RecyclerView devicesList;
     private RecyclerAdapter adapter;
+
+    private BackgroundScan serviceInstance;
 
 
     private ActivityResultLauncher<Intent> enableBluetoothResultLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
@@ -113,35 +117,19 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 }
             });
 
-    private ScanCallback scanCallback = new ScanCallback() {
+
+    private ServiceConnection mConnection = new ServiceConnection() {
         @Override
-        public void onScanResult(int callbackType, ScanResult result) {
-            super.onScanResult(callbackType, result);
-            BluetoothDevice device = result.getDevice();
-            if (device != null && device.getName() != null &&
-            !device.getName().isEmpty()) {
-                List<ParcelUuid> uuids = result.getScanRecord().getServiceUuids();
-                if (!scannedDevices.contains(new MyBluetoothDevice(device, uuids))) {
-                    if (device.getName().equals("ESP32")) {
-                        scannedDevices.add(0, new MyBluetoothDevice(device, uuids));
-                    } else {
-                        scannedDevices.add(new MyBluetoothDevice(device, uuids));
-                    }
-                    if (deviceNameMapping.containsKey(device.getName())) {
-                        deviceNameMapping.get(device.getName()).add(new MyBluetoothDevice(device, uuids));
-                    } else {
-                        List<MyBluetoothDevice> devicesList = new ArrayList<MyBluetoothDevice>();
-                        devicesList.add(new MyBluetoothDevice(device, uuids));
-                        deviceNameMapping.put(device.getName().toUpperCase(), devicesList);
-                    }
-                }
-            }
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            BackgroundScan.MyBinder binder = (BackgroundScan.MyBinder) service;
+            serviceInstance = binder.getInstance();
+            serviceInstance.registerClient(MainActivity.this);
+            Log.i("SERVICE BIND", "Success");
         }
 
         @Override
-        public void onScanFailed(int errorCode) {
-            super.onScanFailed(errorCode);
-            Toast.makeText(MainActivity.this, "Scan failed with error code: " + errorCode, Toast.LENGTH_LONG).show();
+        public void onServiceDisconnected(ComponentName name) {
+
         }
     };
 
@@ -156,8 +144,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                         Log.i("DEVICE CONNECT", "Connected to device. Proceeding with service discovery");
                         isDeviceConnected = true;
                         MainActivity.this.gatt = gatt;
-                        editor.putString("device_address", gatt.getDevice().getAddress());
-                        editor.apply();
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
@@ -214,15 +200,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                     BluetoothGattCharacteristic characteristic = service.getCharacteristic(UUID.fromString(CHARACTERISTIC_UUID));
                     if (characteristic != null) {
                         mCharacteristic = characteristic;
-                        gatt.setCharacteristicNotification(mCharacteristic, true);
-                        Log.i("DEVICE CHARACTERISTIC", "Found characteristic with UUID: " + characteristic.getUuid().toString());
-                        characteristic.setValue("Test Value");
-                        gatt.writeCharacteristic(characteristic);
-                    }
-                    BluetoothGattCharacteristic subsystem = service.getCharacteristic(UUID.fromString(SUBSYSTEM_CHARACTERISTIC));
-                    if (subsystem != null) {
-                        subsystemCharacteristic = subsystem;
-
+                        gatt.readCharacteristic(mCharacteristic);
                     }
                 }
             } else {
@@ -265,14 +243,26 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         }
 
         @Override
-        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+        public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                String characteristicValue = new String(characteristic.getValue(), StandardCharsets.UTF_8);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(MainActivity.this, "" + new String(value, StandardCharsets.UTF_8), Toast.LENGTH_LONG).show();
+                        Toast.makeText(MainActivity.this, "" + characteristicValue, Toast.LENGTH_LONG).show();
                     }
                 });
+
+                Log.i("CHARACTERISTIC READ", "Success. Value=" + characteristicValue);
+
+                try {
+                    JSONObject json = new JSONObject(characteristicValue);
+                    int lastDetected = json.getInt("lastDetected");
+                    showAlertNotification(lastDetected);
+                    gatt.disconnect();      // disconnect after sending the alert notification
+                } catch (JSONException e) {
+                    e.printStackTrace();
+                }
             }
         }
 
@@ -292,6 +282,41 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
             super.onServiceChanged(gatt);
         }
     };
+
+
+    private void addDeviceToList(BluetoothDevice device, List<ParcelUuid> uuids) {
+        if (device != null && device.getName() != null &&
+                !device.getName().isEmpty()) {
+            if (!scannedDevices.contains(new MyBluetoothDevice(device, uuids))) {
+                if (device.getName().equals("ESP32")) {
+                    scannedDevices.add(0, new MyBluetoothDevice(device, uuids));
+                } else {
+                    scannedDevices.add(new MyBluetoothDevice(device, uuids));
+                }
+                if (deviceNameMapping.containsKey(device.getName())) {
+                    deviceNameMapping.get(device.getName()).add(new MyBluetoothDevice(device, uuids));
+                } else {
+                    List<MyBluetoothDevice> devicesList = new ArrayList<MyBluetoothDevice>();
+                    devicesList.add(new MyBluetoothDevice(device, uuids));
+                    deviceNameMapping.put(device.getName().toUpperCase(), devicesList);
+                }
+                adapter.updateDataset(scannedDevices);
+            }
+        }
+    }
+
+    @Override
+    public void onDeviceScan(ScanResult result) {
+        BluetoothDevice device = result.getDevice();
+        List<ParcelUuid> uuids = result.getScanRecord().getServiceUuids();
+        addDeviceToList(device, uuids);
+    }
+
+    @Override
+    // This will be called when the ESP32 detects an emergency
+    public void onTargetDeviceFound(BluetoothDevice device) {
+        gatt = device.connectGatt(this, true, gattCallback, BluetoothDevice.TRANSPORT_LE);
+    }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -314,8 +339,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     }
 
     private void onDisconnectBtnClick() {
-        editor.remove("device_address");
-        editor.apply();
         esp32Info.setVisibility(View.INVISIBLE);
         disconnectBluetooth();
     }
@@ -419,13 +442,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         stopBackgroundScanBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Foreground service was never started to begin with
-                if (startBackgroundScan == null) {
-                    return;
-                }
-                Toast.makeText(MainActivity.this, "Stopping continuous scan", Toast.LENGTH_LONG).show();
-                MainActivity.this.stopService(new Intent(MainActivity.this, BackgroundScan.class));
-                startBackgroundScan = null;
+                stopBackgroundScan();
             }
         });
 
@@ -436,54 +453,47 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         startBackgroundScan.putExtra("service_uuid", SERVICE_UUID);
         startBackgroundScan.putExtra("characteristic_uuid", CHARACTERISTIC_UUID);
         startService(startBackgroundScan);
-    }
-
-    private void beginScan() {
-        scanner = bluetoothAdapter.getBluetoothLeScanner();
-        if (!scannedDevices.isEmpty()) {
-            scannedDevices.clear();
-        }
-        if (!deviceNameMapping.isEmpty()) {
-            deviceNameMapping.clear();
-        }
-        if (!scanning) {
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    stopScan();
-                }
-            }, SCAN_PERIOD);
-        }
-        scanner.startScan(scanCallback);
-        if (isDeviceConnected) {
-            disconnectBtn.setVisibility(View.VISIBLE);
-        } else {
-            disconnectBtn.setVisibility(View.INVISIBLE);
-        }
-        esp32Info.setVisibility(View.INVISIBLE);
-        scanBtn.setVisibility(View.INVISIBLE);
-        devicesList.setVisibility(View.INVISIBLE);
-        search.setVisibility(View.GONE);
-        progressBar.setVisibility(View.VISIBLE);
-    }
-
-    private void stopScan() {
-        scanning = false;
-        scanner.stopScan(scanCallback);
-        if (!scannedDevices.isEmpty()) {
-            adapter.updateDataset(scannedDevices);
-        }
+        bindService(startBackgroundScan, mConnection, Context.BIND_AUTO_CREATE);
         devicesList.setVisibility(View.VISIBLE);
-        search.setVisibility(View.VISIBLE);
-        scanBtn.setVisibility(View.VISIBLE);
-        progressBar.setVisibility(View.INVISIBLE);
-        scanBtn.setText("Rescan");
+        stopBackgroundScanBtn.setVisibility(View.VISIBLE);
+
+        // For testing purposes
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                showAlertNotification(4);
+            }
+        }, 20000);
+
+    }
+
+    private void stopBackgroundScan() {
+        // Foreground service was never started to begin with
+        if (startBackgroundScan == null) {
+            return;
+        }
+        Toast.makeText(MainActivity.this, "Stopping continuous scan", Toast.LENGTH_LONG).show();
+        if (serviceInstance != null) {
+            serviceInstance.stopServiceScan();
+        }
+        stopService(new Intent(MainActivity.this, BackgroundScan.class));
+        unbindService(mConnection);
+        startBackgroundScan = null;
+        clearScanData();
     }
 
     private void disconnectBluetooth() {
         if (gatt != null) {
             gatt.disconnect();
         }
+    }
+
+    private void clearScanData() {
+        scannedDevices.clear();
+        deviceNameMapping.clear();
+        adapter.updateDataset(scannedDevices);
+        devicesList.setVisibility(View.INVISIBLE);
+        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
     }
 
     private void serviceDiscovery() {
@@ -503,6 +513,19 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 }
             }, 5000);
         }
+    }
+
+    private void showAlertNotification(int lastDetected) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(getApplicationContext(), ALERT_NOTIFICATION_ID)
+                .setSmallIcon(R.drawable.baseline_crisis_alert_24)
+                .setContentTitle("Smart Medical Alert System")
+                .setStyle(new NotificationCompat.BigTextStyle().bigText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room"))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setContentText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room")
+                .setAutoCancel(true);
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(getApplicationContext());
+        notificationManager.notify(2, builder.build());
     }
 
     private ESPData parseCharacteristicNotification(byte[] value) {
@@ -549,27 +572,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     }
 
 
-    // Returns the address of the previous device if the user didn't disconnect before closing the app. Returns null otherwise
-    private String previousConnection() {
-        BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-        BluetoothAdapter adapter = manager.getAdapter();
-        String previousDeviceAddress = sharedPreferences.getString("device_address", null);
-        return previousDeviceAddress;
-    }
-
-
-    // This is called at start up if the user closed the app before but never disconnected from a device
-    private void reconnectToGatt(String previousDeviceAddress) {
-        Toast.makeText(this, "Attempting reconnection with previously connected device...", Toast.LENGTH_LONG).show();
-        BluetoothAdapter adapter = ((BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE)).getAdapter();
-        try {
-            BluetoothDevice connectedDevice = adapter.getRemoteDevice(previousDeviceAddress);
-            connectedDevice.connectGatt(this, true, gattCallback, BluetoothDevice.TRANSPORT_LE);
-        } catch (IllegalArgumentException e) {
-            Toast.makeText(this, "Failed to reconnect to previous device. You may be out of range", Toast.LENGTH_LONG).show();
-        }
-    }
-
     private BluetoothDevice isConnected() {
         BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         List<BluetoothDevice> connectedDevices = manager.getConnectedDevices(BluetoothProfile.GATT);
@@ -589,6 +591,8 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
             getSupportActionBar().hide();
         }
 
+        NotificationHelper.createNotificationChannel(this, ALERT_NOTIFICATION_ID, ALERT_NOTIFICATION_NAME);
+
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         scanBtn = findViewById(R.id.startScan);
         progressBar = findViewById(R.id.progressBar);
@@ -597,13 +601,12 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         esp32Info = findViewById(R.id.esp32_info);
         deviceName = findViewById(R.id.connectedDeviceName);
         stopBackgroundScanBtn = findViewById(R.id.stopBackgroundScan);
-        sharedPreferences = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
-        editor = sharedPreferences.edit();
 
         search.setVisibility(View.GONE);
         progressBar.setVisibility(View.GONE);
         disconnectBtn.setVisibility(View.INVISIBLE);
         esp32Info.setVisibility(View.GONE);
+        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
 
         devicesList = findViewById(R.id.devicesList);
         adapter = new RecyclerAdapter(scannedDevices);
@@ -618,10 +621,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     @Override
     public void onResume() {
         super.onResume();
-        String previousDeviceAddress = previousConnection();
-        if (previousDeviceAddress != null) {
-            reconnectToGatt(previousDeviceAddress);
-        }
     }
 
     @Override
@@ -629,5 +628,4 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         super.onStop();
         disconnectBluetooth();
     }
-
 }

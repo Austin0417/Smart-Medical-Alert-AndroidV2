@@ -1,18 +1,23 @@
 package com.example.smartmedicalalert;
 
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothDevice;
 import android.os.ParcelUuid;
 
 import java.util.List;
 
+@SuppressLint("MissingPermission")
 public class MyBluetoothDevice {
-    private BluetoothDevice device;
+    private BluetoothDevice device = null;
     private List<ParcelUuid> uuids;
+
 
     public MyBluetoothDevice(BluetoothDevice device, List<ParcelUuid> uuids) {
         this.device = device;
         this.uuids = uuids;
     }
+
+
 
     public BluetoothDevice getDevice() { return device; }
     public List<ParcelUuid> getUuids() { return uuids; }

@@ -129,7 +129,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-
+            Log.i("SERVICE BIND", "Disconnected");
         }
     };
 
@@ -258,8 +258,9 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 try {
                     JSONObject json = new JSONObject(characteristicValue);
                     int lastDetected = json.getInt("lastDetected");
-                    showAlertNotification(lastDetected);
+                    showAlertNotification(MainActivity.this, lastDetected);
                     gatt.disconnect();      // disconnect after sending the alert notification
+                    ((IRestartScan) serviceInstance).restartScan();     // restarts the background scan
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
@@ -303,6 +304,22 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 adapter.updateDataset(scannedDevices);
             }
         }
+    }
+
+    // Resumes background scan after two minutes
+    private void restartBackgroundScan(Context context) {
+        Toast.makeText(context, "Resuming background scan in 2 minutes...", Toast.LENGTH_LONG).show();
+        progressBar.setVisibility(View.VISIBLE);
+        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                progressBar.setVisibility(View.INVISIBLE);
+                stopBackgroundScanBtn.setVisibility(View.VISIBLE);
+                launchBackgroundScan();
+            }
+        }, 120000);
     }
 
     @Override
@@ -456,15 +473,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         bindService(startBackgroundScan, mConnection, Context.BIND_AUTO_CREATE);
         devicesList.setVisibility(View.VISIBLE);
         stopBackgroundScanBtn.setVisibility(View.VISIBLE);
-
-        // For testing purposes
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                showAlertNotification(4);
-            }
-        }, 20000);
-
     }
 
     private void stopBackgroundScan() {
@@ -497,7 +505,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     }
 
     private void serviceDiscovery() {
-        if (!isGattConnected) {
+        if (!isGattConnected && isDeviceConnected) {
             new Handler(Looper.getMainLooper()).post(new Runnable() {
                 @Override
                 public void run() {
@@ -515,8 +523,8 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         }
     }
 
-    private void showAlertNotification(int lastDetected) {
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(getApplicationContext(), ALERT_NOTIFICATION_ID)
+    public static void showAlertNotification(Context context, int lastDetected) {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, ALERT_NOTIFICATION_ID)
                 .setSmallIcon(R.drawable.baseline_crisis_alert_24)
                 .setContentTitle("Smart Medical Alert System")
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room"))
@@ -524,7 +532,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 .setContentText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room")
                 .setAutoCancel(true);
 
-        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(getApplicationContext());
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
         notificationManager.notify(2, builder.build());
     }
 
@@ -628,4 +636,13 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         super.onStop();
         disconnectBluetooth();
     }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (serviceInstance != null) {
+            unbindService(mConnection);
+        }
+    }
+
 }

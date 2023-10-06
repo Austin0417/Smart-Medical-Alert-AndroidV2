@@ -14,7 +14,9 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.content.Intent;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -24,7 +26,7 @@ import androidx.core.app.NotificationCompat;
 import com.example.smartmedicalalert.helpers.NotificationHelper;
 
 @SuppressLint("MissingPermission")
-public class BackgroundScan extends Service {
+public class BackgroundScan extends Service implements IRestartScan {
     private String SERVICE_UUID;
     private String CHARACTERISTIC_UUID;
 
@@ -43,7 +45,6 @@ public class BackgroundScan extends Service {
     private IBackgroundScan callback;
 
 
-    // TODO Communicate each scanned BLE device back to the MainActivity. Consider using a JSON string and LocalBroadcastManager
     private ScanCallback scanCallback = new ScanCallback() {
         @Override
         public void onScanResult(int callbackType, ScanResult result) {
@@ -62,6 +63,18 @@ public class BackgroundScan extends Service {
             Toast.makeText(getApplicationContext(), "Scan failed with error code: " + errorCode, Toast.LENGTH_LONG).show();
         }
     };
+
+    @Override
+    public void restartScan() {
+        Toast.makeText(getApplicationContext(), "Resuming background scan in 2 minutes...", Toast.LENGTH_LONG).show();
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                scanner.startScan(scanCallback);
+            }
+        }, 120000);
+    }
 
     @Override
     public void onCreate() {
@@ -102,6 +115,14 @@ public class BackgroundScan extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return mBinder;
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        super.onUnbind(intent);
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        Log.i("UNBIND SERVICE", "Success");
+        return true;
     }
 
     public class MyBinder extends Binder {

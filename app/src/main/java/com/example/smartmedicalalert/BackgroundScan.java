@@ -66,7 +66,7 @@ public class BackgroundScan extends Service implements IRestartScan {
 
     @Override
     public void restartScan() {
-        Toast.makeText(getApplicationContext(), "Resuming background scan in 2 minutes...", Toast.LENGTH_LONG).show();
+//        Toast.makeText(getApplicationContext(), "Resuming background scan in 2 minutes...", Toast.LENGTH_LONG).show();
         Handler handler = new Handler(Looper.getMainLooper());
         handler.postDelayed(new Runnable() {
             @Override

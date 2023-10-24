@@ -16,6 +16,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -29,6 +31,7 @@ import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
@@ -246,21 +249,23 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 String characteristicValue = new String(characteristic.getValue(), StandardCharsets.UTF_8);
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        Toast.makeText(MainActivity.this, "" + characteristicValue, Toast.LENGTH_LONG).show();
-                    }
-                });
-
                 Log.i("CHARACTERISTIC READ", "Success. Value=" + characteristicValue);
 
                 try {
                     JSONObject json = new JSONObject(characteristicValue);
                     int lastDetected = json.getInt("lastDetected");
-                    showAlertNotification(MainActivity.this, lastDetected);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "Alert: No motion detected for " + lastDetected, Toast.LENGTH_LONG).show();
+                        }
+                    });
+                    Intent intent = new Intent(getApplicationContext(), MainActivity.class);
+                    intent.putExtra("prompt_rescan", true);
+                    PendingIntent pIntent = PendingIntent.getActivity(getApplicationContext(), 5, intent, PendingIntent.FLAG_UPDATE_CURRENT);
+                    showAlertNotification(MainActivity.this, lastDetected, pIntent);
                     gatt.disconnect();      // disconnect after sending the alert notification
-                    ((IRestartScan) serviceInstance).restartScan();     // restarts the background scan
+                    stopBackgroundScan();     // restarts the background scan
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
@@ -304,22 +309,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                 adapter.updateDataset(scannedDevices);
             }
         }
-    }
-
-    // Resumes background scan after two minutes
-    private void restartBackgroundScan(Context context) {
-        Toast.makeText(context, "Resuming background scan in 2 minutes...", Toast.LENGTH_LONG).show();
-        progressBar.setVisibility(View.VISIBLE);
-        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
-        Handler handler = new Handler(Looper.getMainLooper());
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                progressBar.setVisibility(View.INVISIBLE);
-                stopBackgroundScanBtn.setVisibility(View.VISIBLE);
-                launchBackgroundScan();
-            }
-        }, 120000);
     }
 
     @Override
@@ -475,6 +464,17 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         stopBackgroundScanBtn.setVisibility(View.VISIBLE);
     }
 
+    private void restartBackgroundService() {
+        stopBackgroundScan();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                launchBackgroundScan();
+            }
+        }, 120000);
+
+    }
+
     private void stopBackgroundScan() {
         // Foreground service was never started to begin with
         if (startBackgroundScan == null) {
@@ -488,6 +488,24 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         unbindService(mConnection);
         startBackgroundScan = null;
         clearScanData();
+    }
+
+    private void promptRescan() {
+        new AlertDialog.Builder(this)
+                .setTitle("Continuous background scan")
+                .setMessage("Would you like to re-enable bluetooth scanning in the background?")
+                .setPositiveButton("Confirm", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        clearScanData();
+                        launchBackgroundScan();
+                    }
+                })
+                .setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {}
+                })
+                .create().show();
     }
 
     private void disconnectBluetooth() {
@@ -523,14 +541,16 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         }
     }
 
-    public static void showAlertNotification(Context context, int lastDetected) {
+    public static void showAlertNotification(Context context, int lastDetected, PendingIntent pIntent) {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, ALERT_NOTIFICATION_ID)
                 .setSmallIcon(R.drawable.baseline_crisis_alert_24)
                 .setContentTitle("Smart Medical Alert System")
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room"))
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setContentText("ALERT: No motion detected for " + lastDetected + " minutes. Consider checking up on the room")
-                .setAutoCancel(true);
+                .setAutoCancel(true)
+                .setVibrate(new long[]{500, 500, 500, 500})
+                .setContentIntent(pIntent);
 
         NotificationManagerCompat notificationManager = NotificationManagerCompat.from(context);
         notificationManager.notify(2, builder.build());
@@ -598,7 +618,9 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         if (getSupportActionBar() != null) {
             getSupportActionBar().hide();
         }
-
+        if (getIntent() != null && getIntent().getBooleanExtra("prompt_rescan", false)) {
+            promptRescan();
+        }
         NotificationHelper.createNotificationChannel(this, ALERT_NOTIFICATION_ID, ALERT_NOTIFICATION_NAME);
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();

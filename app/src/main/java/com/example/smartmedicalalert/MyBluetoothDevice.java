@@ -18,7 +18,6 @@ public class MyBluetoothDevice {
     }
 
 
-
     public BluetoothDevice getDevice() { return device; }
     public List<ParcelUuid> getUuids() { return uuids; }
 
@@ -28,6 +27,9 @@ public class MyBluetoothDevice {
     @Override
     public boolean equals(Object o) {
         MyBluetoothDevice otherDevice = (MyBluetoothDevice) o;
-        return device.equals(otherDevice.getDevice()) && (getUuids() == otherDevice.getUuids() || getUuids().equals(otherDevice.getUuids()));
+        if (getUuids() == null || otherDevice.getUuids() == null) {
+            return device.equals(otherDevice.getDevice());
+        }
+        return device.equals(otherDevice.getDevice()) && getUuids() != null && otherDevice.getUuids() != null && getUuids().equals(otherDevice.getUuids());
     }
 }

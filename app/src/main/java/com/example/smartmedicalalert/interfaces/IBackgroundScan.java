@@ -1,4 +1,4 @@
-package com.example.smartmedicalalert;
+package com.example.smartmedicalalert.interfaces;
 
 
 

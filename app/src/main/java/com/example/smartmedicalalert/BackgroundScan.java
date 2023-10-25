@@ -3,7 +3,6 @@ package com.example.smartmedicalalert;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Notification;
-import android.app.NotificationChannel;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -24,6 +23,8 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.example.smartmedicalalert.helpers.NotificationHelper;
+import com.example.smartmedicalalert.interfaces.IBackgroundScan;
+import com.example.smartmedicalalert.interfaces.IRestartScan;
 
 @SuppressLint("MissingPermission")
 public class BackgroundScan extends Service implements IRestartScan {

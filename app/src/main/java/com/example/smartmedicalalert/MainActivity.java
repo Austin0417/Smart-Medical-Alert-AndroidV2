@@ -10,6 +10,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -26,15 +27,12 @@ import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
-import android.bluetooth.le.BluetoothLeScanner;
-import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
@@ -42,7 +40,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.ParcelUuid;
-import android.preference.PreferenceManager;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MenuItem;
@@ -56,9 +53,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.example.smartmedicalalert.helpers.NotificationHelper;
+import com.example.smartmedicalalert.interfaces.IBackgroundScan;
+import com.example.smartmedicalalert.interfaces.IDeviceConnect;
+import com.example.smartmedicalalert.interfaces.MenuItemListener;
 import com.example.smartmedicalalert.recycleradapter.RecyclerAdapter;
+import com.google.android.material.navigation.NavigationView;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -66,10 +66,8 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -88,8 +86,10 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     private Button scanBtn;
     private Button disconnectBtn;
     private EditText search;
-    private TextView esp32Info;
     private TextView deviceName;
+    private DrawerLayout drawerLayout;
+    private NavigationView drawerOptions;
+    private MenuItemVisibilityHandler menuHandler;
 
     private Button stopBackgroundScanBtn;
     private Intent startBackgroundScan = null;
@@ -156,7 +156,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                                 if (MainActivity.this.gatt.getDevice().getName().equals("ESP32")) {
                                     devicesList.setVisibility(View.INVISIBLE);
                                     search.setVisibility(View.INVISIBLE);
-                                    esp32Info.setVisibility(View.VISIBLE);
                                 }
                             }
                         });
@@ -214,28 +213,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         @Override
         public void onCharacteristicChanged(@NonNull BluetoothGatt gatt, @NonNull BluetoothGattCharacteristic characteristic) {
             super.onCharacteristicChanged(gatt, characteristic);
-            ESPData espData = parseCharacteristicNotification(characteristic.getValue());
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    esp32Info.setText("Room Status: " + espData.getRoomStatus()
-                            + "\nMovement Status: " + espData.getMovementStatus()
-                            + "\nMotion: " + espData.isMotionDetected()
-                            + "\nProximity: " + espData.isProximityDetected()
-                            + "\nLight: " + espData.isLightDetected()
-                            + "\nUltrasonic Baseline: " + espData.getProximityBaseline() + " cm"
-                            + "\nUltrasonic Distance " + espData.getDistance() + " cm"
-                            + "\nLights On Baseline: " + espData.getLightBaseline() + " lux"
-                            + "\nLights Off Baseline: " + espData.getLightBaselineOff() + " lux"
-                            + "\nRoom Lighting Status: " + espData.getLightingStatus()
-                            + "\nLight Intensity: " + espData.getLightIntensity() + " lux"
-                            + "\nVibration baseline: " + espData.getVibrationBaseline() + " m/s^2"
-                            + "\nVibration Intensity: " + espData.getVibrationIntensity() + " m/s^2"
-                            + "\nTotal Active Sensors: " + espData.getActiveSensors()
-                            + "\n Connected Devices: " + espData.getConnectedDevices()
-                            + "\nLast detected: " + espData.getLastDetected() + " minutes ago");
-                }
-            });
         }
 
         @Override
@@ -345,7 +322,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     }
 
     private void onDisconnectBtnClick() {
-        esp32Info.setVisibility(View.INVISIBLE);
         disconnectBluetooth();
     }
 
@@ -354,13 +330,9 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         scanBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Check status of required permissions
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT},
-                            PERMISSIONS_REQUEST_CODE);
-                } else {
-                    launchBackgroundScan();
-                }
+
+
+                launchBackgroundScan();
             }
         });
 
@@ -415,7 +387,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
                         public boolean onMenuItemClick(MenuItem menuItem) {
                             switch(menuItem.getItemId()) {
                                 case R.id.viewDeviceInfo:
-                                    esp32Info.setVisibility(View.VISIBLE);
                                     devicesList.setVisibility(View.INVISIBLE);
                                     search.setVisibility(View.INVISIBLE);
                             }
@@ -455,13 +426,19 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
     }
 
     private void launchBackgroundScan() {
-        startBackgroundScan = new Intent(this, BackgroundScan.class);
-        startBackgroundScan.putExtra("service_uuid", SERVICE_UUID);
-        startBackgroundScan.putExtra("characteristic_uuid", CHARACTERISTIC_UUID);
-        startService(startBackgroundScan);
-        bindService(startBackgroundScan, mConnection, Context.BIND_AUTO_CREATE);
-        devicesList.setVisibility(View.VISIBLE);
-        stopBackgroundScanBtn.setVisibility(View.VISIBLE);
+        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT},
+                    PERMISSIONS_REQUEST_CODE);
+        } else {
+            startBackgroundScan = new Intent(this, BackgroundScan.class);
+            startBackgroundScan.putExtra("service_uuid", SERVICE_UUID);
+            startBackgroundScan.putExtra("characteristic_uuid", CHARACTERISTIC_UUID);
+            startService(startBackgroundScan);
+            bindService(startBackgroundScan, mConnection, Context.BIND_AUTO_CREATE);
+            devicesList.setVisibility(View.VISIBLE);
+            stopBackgroundScanBtn.setVisibility(View.VISIBLE);
+            drawerOptions.getMenu().getItem(1).setVisible(true);
+        }
     }
 
     private void restartBackgroundService() {
@@ -610,10 +587,68 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         }
     }
 
+    private void setViewReferences() {
+        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        scanBtn = findViewById(R.id.startScan);
+        progressBar = findViewById(R.id.progressBar);
+        search = findViewById(R.id.searchDevice);
+        drawerLayout = findViewById(R.id.drawerLayout);
+        drawerOptions = findViewById(R.id.right_drawer);
+        disconnectBtn = findViewById(R.id.disconnectBtn);
+        deviceName = findViewById(R.id.connectedDeviceName);
+        stopBackgroundScanBtn = findViewById(R.id.stopBackgroundScan);
+
+        search.setVisibility(View.GONE);
+        progressBar.setVisibility(View.GONE);
+        disconnectBtn.setVisibility(View.INVISIBLE);
+        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
+
+        devicesList = findViewById(R.id.devicesList);
+        adapter = new RecyclerAdapter(scannedDevices);
+        devicesList.setLayoutManager(new LinearLayoutManager(this));
+        devicesList.setAdapter(adapter);
+        devicesList.setVisibility(View.INVISIBLE);
+    }
+
+    private void initializeNavigationView() {
+        drawerOptions.setNavigationItemSelectedListener(new NavigationView.OnNavigationItemSelectedListener() {
+            @Override
+            public boolean onNavigationItemSelected(@NonNull MenuItem item) {
+                switch (item.getItemId()) {
+                    case R.id.option_scan:
+                        Log.i("NAVIGATION VIEW", "START SCAN");
+                        launchBackgroundScan();
+                        return true;
+                    case R.id.option_disconnect:
+                        Log.i("NAVIGATION VIEW", "DISCONNECT");
+                        onDisconnectBtnClick();
+                        return true;
+                    case R.id.option_stop_background_scan:
+                        Log.i("NAVIGATION VIEW", "STOP BACKGROUND SCAN");
+                        stopBackgroundScan();
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
+
+        // Initially set these menu options to false because the user hasn't connected to a device or started the background scan yet
+        drawerOptions.getMenu().getItem(1).setVisible(false);
+        MenuItem disconnectOption = drawerOptions.getMenu().getItem(2).setVisible(false);
+        menuHandler = new MenuItemVisibilityHandler(disconnectOption);
+        menuHandler.setMenuItemVisibilityListener(new MenuItemListener() {
+            @Override
+            public void onDeviceConnectionChanged(boolean connected) {
+                disconnectOption.setVisible(connected);
+            }
+        });
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+        setContentView(R.layout.activity_main_with_drawer);
         getSupportActionBar().setDisplayShowTitleEnabled(false);
         if (getSupportActionBar() != null) {
             getSupportActionBar().hide();
@@ -623,27 +658,8 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         }
         NotificationHelper.createNotificationChannel(this, ALERT_NOTIFICATION_ID, ALERT_NOTIFICATION_NAME);
 
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        scanBtn = findViewById(R.id.startScan);
-        progressBar = findViewById(R.id.progressBar);
-        search = findViewById(R.id.searchDevice);
-        disconnectBtn = findViewById(R.id.disconnectBtn);
-        esp32Info = findViewById(R.id.esp32_info);
-        deviceName = findViewById(R.id.connectedDeviceName);
-        stopBackgroundScanBtn = findViewById(R.id.stopBackgroundScan);
-
-        search.setVisibility(View.GONE);
-        progressBar.setVisibility(View.GONE);
-        disconnectBtn.setVisibility(View.INVISIBLE);
-        esp32Info.setVisibility(View.GONE);
-        stopBackgroundScanBtn.setVisibility(View.INVISIBLE);
-
-        devicesList = findViewById(R.id.devicesList);
-        adapter = new RecyclerAdapter(scannedDevices);
-        devicesList.setLayoutManager(new LinearLayoutManager(this));
-        devicesList.setAdapter(adapter);
-        devicesList.setVisibility(View.INVISIBLE);
-
+        setViewReferences();
+        initializeNavigationView();
         checkBluetooth();
         addEventListeners();
     }

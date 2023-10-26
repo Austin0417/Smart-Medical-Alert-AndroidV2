@@ -40,6 +40,8 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.ParcelUuid;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MenuItem;
@@ -330,8 +332,6 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         scanBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-
-
                 launchBackgroundScan();
             }
         });
@@ -346,33 +346,26 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         Drawable clearSearchDrawable = search.getCompoundDrawables()[2];
         clearSearchDrawable.setAlpha(0);
 
-        // Listener for when the user enters and searches for a specific device name
-        search.setOnKeyListener(new View.OnKeyListener() {
+        // On every character input, search the list of the adapter and find matches
+        search.addTextChangedListener(new TextWatcher() {
             @Override
-            public boolean onKey(View v, int keyCode, KeyEvent event) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) {
-                    if (!search.getText().toString().isEmpty()) {
-                        clearSearchDrawable.setAlpha(255);
-                        String searchedDevice = search.getText().toString().toUpperCase();
-                        if (deviceNameMapping.containsKey(searchedDevice)) {
-                            List<MyBluetoothDevice> devices = deviceNameMapping.get(searchedDevice);
-                            adapter.updateDataset(devices);
-                        } else {
-                            List<MyBluetoothDevice> potentialMatches = new ArrayList<MyBluetoothDevice>();
-                            for (Map.Entry<String, List<MyBluetoothDevice>> entry: deviceNameMapping.entrySet()) {
-                                if (entry.getKey().contains(searchedDevice)) {
-                                    List<MyBluetoothDevice> match = entry.getValue();
-                                    potentialMatches = Stream.concat(potentialMatches.stream(), match.stream()).collect(Collectors.toList());
-                                }
-                            }
-                            adapter.updateDataset(potentialMatches);
-                        }
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                List<MyBluetoothDevice> matches = new ArrayList<MyBluetoothDevice>();
+                for (MyBluetoothDevice device : scannedDevices) {
+                    if (device.getDevice().getName().contains(s.toString())) {
+                        matches.add(device);
                     }
-                    return true;
                 }
-                return false;
+                adapter.updateDataset(matches);
             }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
         });
+
 
         deviceName.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
@@ -436,8 +429,9 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
             startService(startBackgroundScan);
             bindService(startBackgroundScan, mConnection, Context.BIND_AUTO_CREATE);
             devicesList.setVisibility(View.VISIBLE);
-            stopBackgroundScanBtn.setVisibility(View.VISIBLE);
-            drawerOptions.getMenu().getItem(1).setVisible(true);
+            //stopBackgroundScanBtn.setVisibility(View.VISIBLE);
+            search.setVisibility(View.VISIBLE);
+            drawerOptions.getMenu().getItem(1).setEnabled(true);
         }
     }
 
@@ -465,6 +459,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         unbindService(mConnection);
         startBackgroundScan = null;
         clearScanData();
+        drawerOptions.getMenu().getItem(1).setEnabled(false);
     }
 
     private void promptRescan() {
@@ -598,6 +593,7 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         deviceName = findViewById(R.id.connectedDeviceName);
         stopBackgroundScanBtn = findViewById(R.id.stopBackgroundScan);
 
+        scanBtn.setVisibility(View.GONE);
         search.setVisibility(View.GONE);
         progressBar.setVisibility(View.GONE);
         disconnectBtn.setVisibility(View.INVISIBLE);
@@ -634,15 +630,8 @@ public class MainActivity extends AppCompatActivity implements ActivityCompat.On
         });
 
         // Initially set these menu options to false because the user hasn't connected to a device or started the background scan yet
-        drawerOptions.getMenu().getItem(1).setVisible(false);
-        MenuItem disconnectOption = drawerOptions.getMenu().getItem(2).setVisible(false);
-        menuHandler = new MenuItemVisibilityHandler(disconnectOption);
-        menuHandler.setMenuItemVisibilityListener(new MenuItemListener() {
-            @Override
-            public void onDeviceConnectionChanged(boolean connected) {
-                disconnectOption.setVisible(connected);
-            }
-        });
+        drawerOptions.getMenu().getItem(1).setEnabled(false);
+        MenuItem disconnectOption = drawerOptions.getMenu().getItem(2).setEnabled(false);
     }
 
     @Override

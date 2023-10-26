@@ -18,4 +18,8 @@ public class MenuItemVisibilityHandler {
     public void setMenuItemVisibilityListener(MenuItemListener listener) {
         this.listener = listener;
     }
+
+    public void setMenuItemVisibility(boolean visibility) {
+        menuItem.setVisible(visibility);
+    }
 }
